@@ -262,14 +262,12 @@ export function generateRenameList(orders: AfterSaleOrder[]): RenameItem[] {
     other: '其他',
   };
 
-  orders.forEach((order, orderIndex) => {
-    const attachments = order.attachments.length > 0
-      ? order.attachments
-      : [`附件_${String(orderIndex + 1).padStart(3, '0')}.jpg`];
+  const ordersWithAttachments = orders.filter((o) => o.attachments.length > 0);
 
-    attachments.forEach((att, attIndex) => {
+  ordersWithAttachments.forEach((order) => {
+    order.attachments.forEach((att, attIndex) => {
       const globalIndex = items.length + 1;
-      const ext = att.includes('.') ? att.slice(att.lastIndexOf('.')) : '.jpg';
+      const ext = att.includes('.') ? att.slice(att.lastIndexOf('.')) : '';
       const newBaseName = generateArchiveFileName(order, globalIndex);
       items.push({
         originalName: att,
@@ -345,4 +343,104 @@ export function exportRenameBat(orders: AfterSaleOrder[], filename: string): voi
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+export interface DailyReportRow {
+  date: string;
+  total: number;
+  refund: number;
+  reissue: number;
+  dispute: number;
+  consult: number;
+  other: number;
+  urgent: number;
+  duplicate: number;
+  addressChanged: number;
+  completed: number;
+  pending: number;
+}
+
+export function generateDailyReport(orders: AfterSaleOrder[]): DailyReportRow[] {
+  const dayMap = new Map<string, DailyReportRow>();
+
+  for (const order of orders) {
+    const dateStr = new Date(order.createdAt).toISOString().slice(0, 10);
+    const existing = dayMap.get(dateStr);
+    if (existing) {
+      existing.total++;
+      existing[order.type]++;
+      if (order.isUrgent) existing.urgent++;
+      if (order.isDuplicate) existing.duplicate++;
+      if (order.addressChanged) existing.addressChanged++;
+      if (order.status === 'completed') existing.completed++;
+      if (order.status === 'pending') existing.pending++;
+    } else {
+      const row: DailyReportRow = {
+        date: dateStr,
+        total: 1,
+        refund: order.type === 'refund' ? 1 : 0,
+        reissue: order.type === 'reissue' ? 1 : 0,
+        dispute: order.type === 'dispute' ? 1 : 0,
+        consult: order.type === 'consult' ? 1 : 0,
+        other: order.type === 'other' ? 1 : 0,
+        urgent: order.isUrgent ? 1 : 0,
+        duplicate: order.isDuplicate ? 1 : 0,
+        addressChanged: order.addressChanged ? 1 : 0,
+        completed: order.status === 'completed' ? 1 : 0,
+        pending: order.status === 'pending' ? 1 : 0,
+      };
+      dayMap.set(dateStr, row);
+    }
+  }
+
+  return Array.from(dayMap.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+export function exportDailyReport(orders: AfterSaleOrder[], filename: string): void {
+  const report = generateDailyReport(orders);
+
+  const exportData = report.map((row) => ({
+    日期: row.date,
+    总量: row.total,
+    退款申请: row.refund,
+    补发申请: row.reissue,
+    争议申诉: row.dispute,
+    咨询沟通: row.consult,
+    其他: row.other,
+    紧急件: row.urgent,
+    重复申诉: row.duplicate,
+    地址变更: row.addressChanged,
+    已完成: row.completed,
+    待处理: row.pending,
+  }));
+
+  const totals = {
+    日期: '合计',
+    总量: report.reduce((s, r) => s + r.total, 0),
+    退款申请: report.reduce((s, r) => s + r.refund, 0),
+    补发申请: report.reduce((s, r) => s + r.reissue, 0),
+    争议申诉: report.reduce((s, r) => s + r.dispute, 0),
+    咨询沟通: report.reduce((s, r) => s + r.consult, 0),
+    其他: report.reduce((s, r) => s + r.other, 0),
+    紧急件: report.reduce((s, r) => s + r.urgent, 0),
+    重复申诉: report.reduce((s, r) => s + r.duplicate, 0),
+    地址变更: report.reduce((s, r) => s + r.addressChanged, 0),
+    已完成: report.reduce((s, r) => s + r.completed, 0),
+    待处理: report.reduce((s, r) => s + r.pending, 0),
+  };
+
+  exportData.push(totals);
+
+  const worksheet = XLSX.utils.json_to_sheet(exportData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, '统计日报');
+
+  const colWidths = [
+    { wch: 12 }, { wch: 6 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
+    { wch: 8 }, { wch: 6 }, { wch: 6 }, { wch: 8 }, { wch: 8 },
+    { wch: 6 }, { wch: 6 },
+  ];
+  worksheet['!cols'] = colWidths;
+
+  XLSX.writeFile(workbook, `${filename}.xlsx`);
 }

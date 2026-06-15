@@ -1,10 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/store/useAppStore';
-import { Search, Filter, ChevronLeft, ChevronRight, Check, X, Edit3, Save, User, Clock, MapPin, AlertTriangle, Repeat, FileText, MessageSquare, Tag } from 'lucide-react';
+import { Search, Filter, ChevronLeft, ChevronRight, Check, X, Edit3, Save, User, Clock, MapPin, AlertTriangle, Repeat, FileText, MessageSquare, Tag, ShieldAlert, List } from 'lucide-react';
 import { AFTER_SALE_TYPE_LABELS, AFTER_SALE_TYPE_COLORS, ORDER_STATUS_LABELS, REVIEWERS, type AfterSaleType, type OrderStatus, type AfterSaleOrder } from '@/types';
 import { cn, formatDateTime, truncateText } from '@/lib/utils';
 import { DateRangeFilter } from '@/components/common/DateRangeFilter';
+
+type ViewMode = 'all' | 'priority';
+
+function isHighRisk(order: AfterSaleOrder): boolean {
+  return order.isDuplicate || order.isUrgent || order.addressChanged;
+}
 
 export function ReviewPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -17,8 +23,6 @@ export function ReviewPage() {
     setCurrentPage,
     pageSize,
     getFilteredOrders,
-    getPaginatedOrders,
-    getTotalPages,
     updateOrder,
     selectedOrderId,
     setSelectedOrderId,
@@ -29,10 +33,29 @@ export function ReviewPage() {
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [editingRemark, setEditingRemark] = useState(false);
   const [remarkText, setRemarkText] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('all');
 
   const filteredOrders = getFilteredOrders();
-  const paginatedOrders = getPaginatedOrders();
-  const totalPages = getTotalPages();
+
+  const priorityOrders = useMemo(
+    () => filteredOrders.filter(isHighRisk),
+    [filteredOrders],
+  );
+
+  const normalOrders = useMemo(
+    () => filteredOrders.filter((o) => !isHighRisk(o)),
+    [filteredOrders],
+  );
+
+  const displayOrders = viewMode === 'priority' ? priorityOrders : filteredOrders;
+
+  const totalPages = Math.max(1, Math.ceil(displayOrders.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const paginatedOrders = useMemo(() => {
+    const start = (safeCurrentPage - 1) * pageSize;
+    return displayOrders.slice(start, start + pageSize);
+  }, [displayOrders, safeCurrentPage, pageSize]);
 
   const selectedOrder = orders.find((o) => o.id === selectedOrderId) || null;
 
@@ -42,6 +65,11 @@ export function ReviewPage() {
       setSelectedOrderId(id);
     }
   }, [searchParams, setSelectedOrderId]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+    setCurrentPage(1);
+  }, [viewMode, setCurrentPage]);
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -91,7 +119,18 @@ export function ReviewPage() {
     }
   };
 
+  const handleSelectAllPriority = () => {
+    setSelectedIds(priorityOrders.map((o) => o.id));
+  };
+
   const isAllSelected = paginatedOrders.length > 0 && paginatedOrders.every((o) => selectedIds.includes(o.id));
+
+  const priorityStats = useMemo(() => {
+    const dup = filteredOrders.filter((o) => o.isDuplicate).length;
+    const urgent = filteredOrders.filter((o) => o.isUrgent).length;
+    const addr = filteredOrders.filter((o) => o.addressChanged).length;
+    return { dup, urgent, addr, total: priorityOrders.length };
+  }, [filteredOrders, priorityOrders]);
 
   return (
     <div className="flex gap-6 h-[calc(100vh-8rem)]">
@@ -100,7 +139,7 @@ export function ReviewPage() {
           <div>
             <h1 className="text-2xl font-bold text-slate-800">结果复核</h1>
             <p className="text-slate-500 text-sm mt-1">
-              共 {filteredOrders.length} 条记录，已选择 {selectedIds.length} 条
+              共 {displayOrders.length} 条记录{viewMode === 'priority' ? '（异常优先队列）' : ''}，已选择 {selectedIds.length} 条
             </p>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
@@ -128,6 +167,73 @@ export function ReviewPage() {
               筛选
             </button>
           </div>
+        </div>
+
+        <div className="flex items-center gap-2 mb-4">
+          <button
+            onClick={() => setViewMode('priority')}
+            className={cn(
+              'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors',
+              viewMode === 'priority'
+                ? 'bg-red-50 border-red-300 text-red-700'
+                : 'border-slate-200 text-slate-600 hover:bg-slate-50',
+            )}
+          >
+            <ShieldAlert className="w-4 h-4" />
+            异常优先
+            {priorityStats.total > 0 && (
+              <span className={cn(
+                'inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold',
+                viewMode === 'priority' ? 'bg-red-600 text-white' : 'bg-slate-200 text-slate-600',
+              )}>
+                {priorityStats.total}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setViewMode('all')}
+            className={cn(
+              'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors',
+              viewMode === 'all'
+                ? 'bg-teal-50 border-teal-300 text-teal-700'
+                : 'border-slate-200 text-slate-600 hover:bg-slate-50',
+            )}
+          >
+            <List className="w-4 h-4" />
+            全部订单
+            <span className={cn(
+              'inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold',
+              viewMode === 'all' ? 'bg-teal-600 text-white' : 'bg-slate-200 text-slate-600',
+            )}>
+              {filteredOrders.length}
+            </span>
+          </button>
+
+          {viewMode === 'priority' && (
+            <div className="flex items-center gap-3 ml-2 text-xs text-slate-500">
+              <span className="flex items-center gap-1">
+                <Repeat className="w-3 h-3 text-purple-500" />
+                重复 {priorityStats.dup}
+              </span>
+              <span className="flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3 text-amber-500" />
+                紧急 {priorityStats.urgent}
+              </span>
+              <span className="flex items-center gap-1">
+                <MapPin className="w-3 h-3 text-green-500" />
+                地址变更 {priorityStats.addr}
+              </span>
+            </div>
+          )}
+
+          {viewMode === 'priority' && priorityOrders.length > 0 && (
+            <button
+              onClick={handleSelectAllPriority}
+              className="ml-auto text-xs text-red-600 hover:text-red-700 font-medium"
+            >
+              全选异常单（{priorityStats.total}条）
+            </button>
+          )}
         </div>
 
         {showFilterPanel && (
@@ -207,17 +313,24 @@ export function ReviewPage() {
         )}
 
         {selectedIds.length > 0 && (
-          <div className="mb-4 p-3 bg-teal-50 rounded-lg border border-teal-200 flex items-center justify-between">
-            <span className="text-sm text-teal-700">
+          <div className={cn(
+            'mb-4 p-3 rounded-lg border flex items-center justify-between',
+            viewMode === 'priority' ? 'bg-red-50 border-red-200' : 'bg-teal-50 border-teal-200',
+          )}>
+            <span className={cn('text-sm', viewMode === 'priority' ? 'text-red-700' : 'text-teal-700')}>
               已选择 <strong>{selectedIds.length}</strong> 条记录
+              {viewMode === 'priority' && '（异常优先队列）'}
             </span>
             <div className="flex items-center gap-2">
               <span className="text-sm text-slate-600">批量分配：</span>
-              {REVIEWERS.slice(0, 3).map((r) => (
+              {REVIEWERS.slice(0, 4).map((r) => (
                 <button
                   key={r}
                   onClick={() => handleBatchAssign(r)}
-                  className="px-3 py-1 text-sm bg-white border border-teal-300 text-teal-700 rounded hover:bg-teal-100 transition-colors"
+                  className={cn(
+                    'px-3 py-1 text-sm bg-white border rounded hover:bg-slate-50 transition-colors',
+                    viewMode === 'priority' ? 'border-red-300 text-red-700 hover:bg-red-50' : 'border-teal-300 text-teal-700 hover:bg-teal-100',
+                  )}
                 >
                   {r}
                 </button>
@@ -249,86 +362,97 @@ export function ReviewPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedOrders.map((order) => (
-                  <tr
-                    key={order.id}
-                    onClick={() => handleOrderClick(order)}
-                    className={cn(
-                      'border-b cursor-pointer transition-colors',
-                      selectedOrderId === order.id
-                        ? 'bg-teal-50 border-teal-200'
-                        : 'hover:bg-slate-50 border-slate-100',
-                      order.isUrgent && !order.isDuplicate && 'bg-amber-50/50',
-                      order.isDuplicate && 'bg-purple-50/70',
-                    )}
-                    style={order.isDuplicate ? { boxShadow: 'inset 3px 0 0 0 #7c3aed' } : {}}
-                  >
-                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(order.id)}
-                        onChange={(e) => handleSelectOne(order.id, e.target.checked)}
-                        className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs text-slate-700">{order.orderNo}</span>
-                        {order.isDuplicate && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-600 text-white text-[10px] font-bold rounded-full shadow-sm animate-pulse">
-                            <Repeat className="w-3 h-3" />
-                            第{order.duplicateCount || 1}次 / 共{order.duplicateTotal || 2}次申诉
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">{order.buyerName}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                        style={{
-                          backgroundColor: AFTER_SALE_TYPE_COLORS[order.type] + '20',
-                          color: AFTER_SALE_TYPE_COLORS[order.type],
-                        }}
-                      >
-                        {AFTER_SALE_TYPE_LABELS[order.type]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={cn(
-                          'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
-                          order.status === 'completed' && 'bg-green-100 text-green-700',
-                          order.status === 'pending' && 'bg-slate-100 text-slate-600',
-                          order.status === 'processing' && 'bg-blue-100 text-blue-700',
-                          order.status === 'reviewing' && 'bg-amber-100 text-amber-700',
-                          order.status === 'exception' && 'bg-red-100 text-red-700',
-                        )}
-                      >
-                        {ORDER_STATUS_LABELS[order.status]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        {order.isUrgent && (
-                          <AlertTriangle className="w-4 h-4 text-amber-500" aria-label="紧急件" />
-                        )}
-                        {order.isDuplicate && (
-                          <Repeat className="w-4 h-4 text-purple-500" aria-label="重复申诉" />
-                        )}
-                        {order.addressChanged && (
-                          <MapPin className="w-4 h-4 text-green-500" aria-label="地址变更" />
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 max-w-xs">
-                      {truncateText(order.messages[order.messages.length - 1]?.content || '', 30)}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {order.reviewer || <span className="text-slate-400">未分配</span>}
+                {paginatedOrders.map((order) => {
+                  const highRisk = isHighRisk(order);
+                  return (
+                    <tr
+                      key={order.id}
+                      onClick={() => handleOrderClick(order)}
+                      className={cn(
+                        'border-b cursor-pointer transition-colors',
+                        selectedOrderId === order.id
+                          ? 'bg-teal-50 border-teal-200'
+                          : 'hover:bg-slate-50 border-slate-100',
+                        order.isDuplicate && 'bg-purple-50/70',
+                        !order.isDuplicate && order.isUrgent && 'bg-amber-50/50',
+                        !order.isDuplicate && !order.isUrgent && order.addressChanged && 'bg-green-50/40',
+                      )}
+                      style={order.isDuplicate ? { boxShadow: 'inset 3px 0 0 0 #7c3aed' } : order.isUrgent ? { boxShadow: 'inset 3px 0 0 0 #f59e0b' } : order.addressChanged ? { boxShadow: 'inset 3px 0 0 0 #22c55e' } : {}}
+                    >
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(order.id)}
+                          onChange={(e) => handleSelectOne(order.id, e.target.checked)}
+                          className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs text-slate-700">{order.orderNo}</span>
+                          {order.isDuplicate && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-600 text-white text-[10px] font-bold rounded-full shadow-sm animate-pulse">
+                              <Repeat className="w-3 h-3" />
+                              第{order.duplicateCount || 1}次 / 共{order.duplicateTotal || 2}次申诉
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">{order.buyerName}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                          style={{
+                            backgroundColor: AFTER_SALE_TYPE_COLORS[order.type] + '20',
+                            color: AFTER_SALE_TYPE_COLORS[order.type],
+                          }}
+                        >
+                          {AFTER_SALE_TYPE_LABELS[order.type]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={cn(
+                            'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
+                            order.status === 'completed' && 'bg-green-100 text-green-700',
+                            order.status === 'pending' && 'bg-slate-100 text-slate-600',
+                            order.status === 'processing' && 'bg-blue-100 text-blue-700',
+                            order.status === 'reviewing' && 'bg-amber-100 text-amber-700',
+                            order.status === 'exception' && 'bg-red-100 text-red-700',
+                          )}
+                        >
+                          {ORDER_STATUS_LABELS[order.status]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          {order.isUrgent && (
+                            <AlertTriangle className="w-4 h-4 text-amber-500" aria-label="紧急件" />
+                          )}
+                          {order.isDuplicate && (
+                            <Repeat className="w-4 h-4 text-purple-500" aria-label="重复申诉" />
+                          )}
+                          {order.addressChanged && (
+                            <MapPin className="w-4 h-4 text-green-500" aria-label="地址变更" />
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 max-w-xs">
+                        {truncateText(order.messages[order.messages.length - 1]?.content || '', 30)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {order.reviewer || <span className="text-slate-400">未分配</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {paginatedOrders.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-12 text-center text-slate-400">
+                      {viewMode === 'priority' ? '当前筛选条件下无异常订单' : '暂无数据'}
                     </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
@@ -336,12 +460,12 @@ export function ReviewPage() {
           {totalPages > 1 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 bg-slate-50">
               <span className="text-sm text-slate-500">
-                第 {currentPage} / {totalPages} 页
+                第 {safeCurrentPage} / {totalPages} 页
               </span>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
+                  disabled={safeCurrentPage === 1}
                   className="p-2 rounded-lg hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <ChevronLeft className="w-4 h-4" />
@@ -349,10 +473,10 @@ export function ReviewPage() {
                 {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                   let page = i + 1;
                   if (totalPages > 5) {
-                    if (currentPage > 3) {
-                      page = currentPage - 2 + i;
+                    if (safeCurrentPage > 3) {
+                      page = safeCurrentPage - 2 + i;
                     }
-                    if (currentPage > totalPages - 2) {
+                    if (safeCurrentPage > totalPages - 2) {
                       page = totalPages - 4 + i;
                     }
                   }
@@ -362,7 +486,7 @@ export function ReviewPage() {
                       onClick={() => setCurrentPage(page)}
                       className={cn(
                         'w-8 h-8 rounded-lg text-sm font-medium transition-colors',
-                        currentPage === page
+                        safeCurrentPage === page
                           ? 'bg-teal-600 text-white'
                           : 'hover:bg-slate-200 text-slate-600',
                       )}
@@ -372,8 +496,8 @@ export function ReviewPage() {
                   );
                 })}
                 <button
-                  onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
+                  disabled={safeCurrentPage === totalPages}
                   className="p-2 rounded-lg hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <ChevronRight className="w-4 h-4" />

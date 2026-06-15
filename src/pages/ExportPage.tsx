@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useAppStore } from '@/store/useAppStore';
-import { Download, FileSpreadsheet, FileArchive, BarChart3, TrendingUp, Users, PieChart, CheckCircle, FileText, Terminal } from 'lucide-react';
+import { Download, FileSpreadsheet, FileArchive, BarChart3, TrendingUp, Users, PieChart, CheckCircle, FileText, Terminal, CalendarDays } from 'lucide-react';
 import { AFTER_SALE_TYPE_LABELS, AFTER_SALE_TYPE_COLORS, ORDER_STATUS_LABELS, REVIEWERS, type AfterSaleType } from '@/types';
-import { exportToExcel, generateRenameList, exportRenameList, exportRenameBat } from '@/utils/fileUtils';
+import { exportToExcel, generateRenameList, exportRenameList, exportRenameBat, generateDailyReport, exportDailyReport } from '@/utils/fileUtils';
 import { cn } from '@/lib/utils';
 import { PieChart as RechartsPieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { DateRangeFilter } from '@/components/common/DateRangeFilter';
@@ -24,6 +24,18 @@ export function ExportPage() {
     name: reviewer,
     处理数: filteredOrders.filter((o) => o.reviewer === reviewer).length,
   })).filter((r) => r.处理数 > 0);
+
+  const dailyReport = useMemo(() => generateDailyReport(filteredOrders), [filteredOrders]);
+
+  const dailyTrendChartData = useMemo(() => {
+    return [...dailyReport].reverse().map((row) => ({
+      date: row.date.slice(5),
+      退款: row.refund,
+      补发: row.reissue,
+      争议: row.dispute,
+      咨询: row.consult,
+    }));
+  }, [dailyReport]);
 
   const timestamp = new Date().toISOString().slice(0, 10);
 
@@ -54,7 +66,15 @@ export function ExportPage() {
     setTimeout(() => setExportSuccess(false), 3000);
   };
 
-  const archivePreview = generateRenameList(filteredOrders).slice(0, 15);
+  const handleExportDailyReport = () => {
+    exportDailyReport(filteredOrders, `统计日报_${timestamp}`);
+    setExportSuccess(true);
+    setTimeout(() => setExportSuccess(false), 3000);
+  };
+
+  const renameList = generateRenameList(filteredOrders);
+  const archivePreview = renameList.slice(0, 15);
+  const ordersWithAttachments = filteredOrders.filter((o) => o.attachments.length > 0);
 
   const statCards = [
     {
@@ -86,6 +106,13 @@ export function ExportPage() {
       bgColor: 'bg-purple-50',
     },
   ];
+
+  const TYPE_COLORS: Record<string, string> = {
+    退款: '#EF4444',
+    补发: '#F59E0B',
+    争议: '#8B5CF6',
+    咨询: '#0EA5E9',
+  };
 
   return (
     <div className="space-y-6">
@@ -198,6 +225,113 @@ export function ExportPage() {
         </div>
       )}
 
+      <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+            <CalendarDays className="w-5 h-5 text-teal-600" />
+            统计日报
+            <span className="text-sm font-normal text-slate-500 ml-2">
+              按天汇总处理量，{dailyReport.length} 天数据
+            </span>
+          </h3>
+          <button
+            onClick={handleExportDailyReport}
+            disabled={filteredOrders.length === 0}
+            className={cn(
+              'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+              filteredOrders.length === 0
+                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                : 'bg-teal-600 text-white hover:bg-teal-700',
+            )}
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            导出日报（Excel）
+          </button>
+        </div>
+
+        {dailyTrendChartData.length > 1 && (
+          <div className="mb-5">
+            <h4 className="text-sm font-medium text-slate-600 mb-3">每日趋势</h4>
+            <div className="h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dailyTrendChartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#64748b" />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#64748b" />
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="退款" stackId="a" fill="#EF4444" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="补发" stackId="a" fill="#F59E0B" />
+                  <Bar dataKey="争议" stackId="a" fill="#8B5CF6" />
+                  <Bar dataKey="咨询" stackId="a" fill="#0EA5E9" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-x-auto border border-slate-200 rounded-lg">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr className="border-b border-slate-200">
+                <th className="px-3 py-2.5 text-left font-medium text-slate-600 whitespace-nowrap">日期</th>
+                <th className="px-3 py-2.5 text-center font-medium text-slate-600">总量</th>
+                <th className="px-3 py-2.5 text-center font-medium text-slate-600">退款</th>
+                <th className="px-3 py-2.5 text-center font-medium text-slate-600">补发</th>
+                <th className="px-3 py-2.5 text-center font-medium text-slate-600">争议</th>
+                <th className="px-3 py-2.5 text-center font-medium text-slate-600">咨询</th>
+                <th className="px-3 py-2.5 text-center font-medium text-slate-600">紧急</th>
+                <th className="px-3 py-2.5 text-center font-medium text-slate-600">重复</th>
+                <th className="px-3 py-2.5 text-center font-medium text-slate-600">地址变更</th>
+                <th className="px-3 py-2.5 text-center font-medium text-slate-600">已完成</th>
+                <th className="px-3 py-2.5 text-center font-medium text-slate-600">待处理</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dailyReport.map((row) => (
+                <tr key={row.date} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="px-3 py-2 font-medium text-slate-700">{row.date}</td>
+                  <td className="px-3 py-2 text-center font-semibold text-slate-800">{row.total}</td>
+                  <td className="px-3 py-2 text-center text-red-600">{row.refund || '-'}</td>
+                  <td className="px-3 py-2 text-center text-amber-600">{row.reissue || '-'}</td>
+                  <td className="px-3 py-2 text-center text-purple-600">{row.dispute || '-'}</td>
+                  <td className="px-3 py-2 text-center text-sky-600">{row.consult || '-'}</td>
+                  <td className="px-3 py-2 text-center text-amber-500">{row.urgent || '-'}</td>
+                  <td className="px-3 py-2 text-center text-purple-500">{row.duplicate || '-'}</td>
+                  <td className="px-3 py-2 text-center text-green-600">{row.addressChanged || '-'}</td>
+                  <td className="px-3 py-2 text-center text-green-700">{row.completed || '-'}</td>
+                  <td className="px-3 py-2 text-center text-slate-500">{row.pending || '-'}</td>
+                </tr>
+              ))}
+              {dailyReport.length === 0 && (
+                <tr>
+                  <td colSpan={11} className="px-3 py-8 text-center text-slate-400">暂无数据</td>
+                </tr>
+              )}
+              {dailyReport.length > 0 && (
+                <tr className="bg-slate-100 font-semibold">
+                  <td className="px-3 py-2 text-slate-700">合计</td>
+                  <td className="px-3 py-2 text-center text-slate-800">{dailyReport.reduce((s, r) => s + r.total, 0)}</td>
+                  <td className="px-3 py-2 text-center text-red-600">{dailyReport.reduce((s, r) => s + r.refund, 0) || '-'}</td>
+                  <td className="px-3 py-2 text-center text-amber-600">{dailyReport.reduce((s, r) => s + r.reissue, 0) || '-'}</td>
+                  <td className="px-3 py-2 text-center text-purple-600">{dailyReport.reduce((s, r) => s + r.dispute, 0) || '-'}</td>
+                  <td className="px-3 py-2 text-center text-sky-600">{dailyReport.reduce((s, r) => s + r.consult, 0) || '-'}</td>
+                  <td className="px-3 py-2 text-center text-amber-500">{dailyReport.reduce((s, r) => s + r.urgent, 0) || '-'}</td>
+                  <td className="px-3 py-2 text-center text-purple-500">{dailyReport.reduce((s, r) => s + r.duplicate, 0) || '-'}</td>
+                  <td className="px-3 py-2 text-center text-green-600">{dailyReport.reduce((s, r) => s + r.addressChanged, 0) || '-'}</td>
+                  <td className="px-3 py-2 text-center text-green-700">{dailyReport.reduce((s, r) => s + r.completed, 0) || '-'}</td>
+                  <td className="px-3 py-2 text-center text-slate-500">{dailyReport.reduce((s, r) => s + r.pending, 0) || '-'}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <p className="text-xs text-slate-400 mt-3">
+          日报数据受右上角日期范围筛选控制，选择日期区间后仅导出该范围内的按天汇总
+        </p>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
           <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
@@ -268,7 +402,7 @@ export function ExportPage() {
             附件批量改名
           </h3>
           <p className="text-sm text-slate-500 mb-4">
-            自动按照「订单号_类型_日期_序号」格式重命名附件，共 {archivePreview.length > 0 ? generateRenameList(filteredOrders).length : 0} 个文件待处理
+            自动按照「订单号_类型_日期_序号」格式重命名附件，共 <strong>{renameList.length}</strong> 个真实附件待处理（涉及 {ordersWithAttachments.length} 个订单）
           </p>
           <div className="bg-slate-50 rounded-lg p-3 max-h-52 overflow-y-auto border border-slate-200">
             <div className="space-y-1.5">
@@ -284,12 +418,12 @@ export function ExportPage() {
                 ))
               ) : (
                 <div className="text-center py-6 text-slate-400 text-sm">
-                  暂无数据
+                  暂无真实附件数据
                 </div>
               )}
-              {generateRenameList(filteredOrders).length > archivePreview.length && (
+              {renameList.length > archivePreview.length && (
                 <p className="text-xs text-slate-400 text-center pt-2 border-t border-slate-200 mt-2">
-                  ... 还有 {generateRenameList(filteredOrders).length - archivePreview.length} 个文件
+                  ... 还有 {renameList.length - archivePreview.length} 个附件
                 </p>
               )}
             </div>
@@ -297,10 +431,10 @@ export function ExportPage() {
           <div className="grid grid-cols-2 gap-2 mt-4">
             <button
               onClick={handleExportRenameExcel}
-              disabled={filteredOrders.length === 0}
+              disabled={renameList.length === 0}
               className={cn(
                 'inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                filteredOrders.length === 0
+                renameList.length === 0
                   ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                   : 'bg-teal-600 text-white hover:bg-teal-700',
               )}
@@ -310,10 +444,10 @@ export function ExportPage() {
             </button>
             <button
               onClick={handleExportRenameBat}
-              disabled={filteredOrders.length === 0}
+              disabled={renameList.length === 0}
               className={cn(
                 'inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                filteredOrders.length === 0
+                renameList.length === 0
                   ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                   : 'bg-slate-700 text-white hover:bg-slate-800',
               )}
