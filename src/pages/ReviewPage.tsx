@@ -12,6 +12,10 @@ function isHighRisk(order: AfterSaleOrder): boolean {
   return order.isDuplicate || order.isUrgent || order.addressChanged;
 }
 
+function isUnprocessed(order: AfterSaleOrder): boolean {
+  return order.status !== 'completed';
+}
+
 export function ReviewPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
@@ -38,7 +42,12 @@ export function ReviewPage() {
   const filteredOrders = getFilteredOrders();
 
   const priorityOrders = useMemo(
-    () => filteredOrders.filter(isHighRisk),
+    () => filteredOrders.filter((o) => isHighRisk(o) && isUnprocessed(o)),
+    [filteredOrders],
+  );
+
+  const priorityCompletedCount = useMemo(
+    () => filteredOrders.filter((o) => isHighRisk(o) && !isUnprocessed(o)).length,
     [filteredOrders],
   );
 
@@ -126,11 +135,12 @@ export function ReviewPage() {
   const isAllSelected = paginatedOrders.length > 0 && paginatedOrders.every((o) => selectedIds.includes(o.id));
 
   const priorityStats = useMemo(() => {
-    const dup = filteredOrders.filter((o) => o.isDuplicate).length;
-    const urgent = filteredOrders.filter((o) => o.isUrgent).length;
-    const addr = filteredOrders.filter((o) => o.addressChanged).length;
-    return { dup, urgent, addr, total: priorityOrders.length };
-  }, [filteredOrders, priorityOrders]);
+    const allHighRisk = filteredOrders.filter(isHighRisk);
+    const dup = filteredOrders.filter((o) => o.isDuplicate && isUnprocessed(o)).length;
+    const urgent = filteredOrders.filter((o) => o.isUrgent && isUnprocessed(o)).length;
+    const addr = filteredOrders.filter((o) => o.addressChanged && isUnprocessed(o)).length;
+    return { dup, urgent, addr, total: priorityOrders.length, allTotal: allHighRisk.length, completed: priorityCompletedCount };
+  }, [filteredOrders, priorityOrders, priorityCompletedCount]);
 
   return (
     <div className="flex gap-6 h-[calc(100vh-8rem)]">
@@ -181,7 +191,7 @@ export function ReviewPage() {
           >
             <ShieldAlert className="w-4 h-4" />
             异常优先
-            {priorityStats.total > 0 && (
+            {priorityStats.allTotal > 0 && (
               <span className={cn(
                 'inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold',
                 viewMode === 'priority' ? 'bg-red-600 text-white' : 'bg-slate-200 text-slate-600',
@@ -190,6 +200,19 @@ export function ReviewPage() {
               </span>
             )}
           </button>
+          {priorityStats.allTotal > 0 && (
+            <div className="flex items-center gap-2 text-xs">
+              <div className="w-24 h-2 bg-slate-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-green-500 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.round((priorityStats.completed / priorityStats.allTotal) * 100)}%` }}
+                />
+              </div>
+              <span className="text-slate-500">
+                已清 {priorityStats.completed}/{priorityStats.allTotal}
+              </span>
+            </div>
+          )}
           <button
             onClick={() => setViewMode('all')}
             className={cn(

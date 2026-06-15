@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import type { AfterSaleOrder, Message, ColumnMapping, CategoryRule } from '@/types';
+import { type AfterSaleOrder, type Message, type ColumnMapping, type CategoryRule, AFTER_SALE_TYPE_LABELS } from '@/types';
 import { generateId, extractOrderNo, extractPhone, extractAddressChange, matchKeywords } from './textUtils';
 
 export async function parseExcelFile(file: File): Promise<any[]> {
@@ -443,4 +443,109 @@ export function exportDailyReport(orders: AfterSaleOrder[], filename: string): v
   worksheet['!cols'] = colWidths;
 
   XLSX.writeFile(workbook, `${filename}.xlsx`);
+}
+
+export function exportHandoverSummary(orders: AfterSaleOrder[], filename: string): void {
+  const dateRange = orders.length > 0
+    ? `${orders.reduce((min, o) => o.createdAt < min ? o.createdAt : min, orders[0].createdAt).slice(0, 10)} ~ ${orders.reduce((max, o) => o.createdAt > max ? o.createdAt : max, orders[0].createdAt).slice(0, 10)}`
+    : '无数据';
+
+  const byType = {
+    refund: orders.filter((o) => o.type === 'refund'),
+    reissue: orders.filter((o) => o.type === 'reissue'),
+    dispute: orders.filter((o) => o.type === 'dispute'),
+    consult: orders.filter((o) => o.type === 'consult'),
+    other: orders.filter((o) => o.type === 'other'),
+  };
+
+  const highRiskOrders = orders.filter((o) => o.isDuplicate || o.isUrgent || o.addressChanged);
+  const unprocessed = orders.filter((o) => o.status !== 'completed');
+
+  const reviewerPending: Record<string, number> = {};
+  for (const o of unprocessed) {
+    const r = o.reviewer || '未分配';
+    reviewerPending[r] = (reviewerPending[r] || 0) + 1;
+  }
+
+  const wsData: any[] = [];
+
+  wsData.push({ A: '售后交接摘要', B: '', C: '', D: '' });
+  wsData.push({ A: '日期范围', B: dateRange, C: '', D: '' });
+  wsData.push({ A: '生成时间', B: new Date().toLocaleString('zh-CN'), C: '', D: '' });
+  wsData.push({ A: '', B: '', C: '', D: '' });
+
+  wsData.push({ A: '一、总体概况', B: '', C: '', D: '' });
+  wsData.push({ A: '总订单数', B: orders.length, C: '已完成', D: orders.filter((o) => o.status === 'completed').length });
+  wsData.push({ A: '待处理', B: unprocessed.length, C: '异常优先单', D: highRiskOrders.filter((o) => o.status !== 'completed').length });
+  wsData.push({ A: '', B: '', C: '', D: '' });
+
+  wsData.push({ A: '二、分类统计', B: '', C: '', D: '' });
+  wsData.push({ A: '退款申请', B: byType.refund.length, C: '已完成', D: byType.refund.filter((o) => o.status === 'completed').length });
+  wsData.push({ A: '补发申请', B: byType.reissue.length, C: '已完成', D: byType.reissue.filter((o) => o.status === 'completed').length });
+  wsData.push({ A: '争议申诉', B: byType.dispute.length, C: '已完成', D: byType.dispute.filter((o) => o.status === 'completed').length });
+  wsData.push({ A: '咨询沟通', B: byType.consult.length, C: '已完成', D: byType.consult.filter((o) => o.status === 'completed').length });
+  wsData.push({ A: '其他', B: byType.other.length, C: '已完成', D: byType.other.filter((o) => o.status === 'completed').length });
+  wsData.push({ A: '', B: '', C: '', D: '' });
+
+  wsData.push({ A: '三、异常优先单明细', B: '', C: '', D: '' });
+  wsData.push({ A: '订单号', B: '买家', C: '类型/标记', D: '状态' });
+  const unprocessedHighRisk = highRiskOrders.filter((o) => o.status !== 'completed');
+  for (const o of unprocessedHighRisk.slice(0, 50)) {
+    const tags: string[] = [getTypeLabel(o.type)];
+    if (o.isUrgent) tags.push('紧急');
+    if (o.isDuplicate) tags.push('重复');
+    if (o.addressChanged) tags.push('地址变更');
+    wsData.push({ A: o.orderNo, B: o.buyerName, C: tags.join('/'), D: getStatusLabel(o.status) });
+  }
+  wsData.push({ A: '', B: '', C: '', D: '' });
+
+  wsData.push({ A: '四、复核人待办', B: '', C: '', D: '' });
+  wsData.push({ A: '复核人', B: '待处理数', C: '', D: '' });
+  for (const [reviewer, count] of Object.entries(reviewerPending).sort((a, b) => b[1] - a[1])) {
+    wsData.push({ A: reviewer, B: count, C: '', D: '' });
+  }
+
+  const worksheet = XLSX.utils.json_to_sheet(wsData, { skipHeader: true });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, '交接摘要');
+  worksheet['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 15 }];
+  XLSX.writeFile(workbook, `${filename}.xlsx`);
+}
+
+export interface ArchiveDirItem {
+  groupKey: string;
+  groupLabel: string;
+  files: { originalName: string; newName: string; orderNo: string }[];
+}
+
+export function generateArchiveDirPreview(orders: AfterSaleOrder[], groupBy: 'order' | 'date'): ArchiveDirItem[] {
+  const ordersWithAttachments = orders.filter((o) => o.attachments.length > 0);
+  const renameItems = generateRenameList(orders);
+  const groupMap = new Map<string, ArchiveDirItem>();
+
+  for (const order of ordersWithAttachments) {
+    const key = groupBy === 'order'
+      ? order.orderNo
+      : new Date(order.createdAt).toISOString().slice(0, 10);
+
+    const label = groupBy === 'order'
+      ? `${order.orderNo} (${AFTER_SALE_TYPE_LABELS[order.type]} / ${order.buyerName})`
+      : key;
+
+    const existing = groupMap.get(key);
+    const orderRenames = renameItems.filter((r) => r.orderNo === order.orderNo);
+    const files = orderRenames.map((r) => ({
+      originalName: r.originalName,
+      newName: r.newName,
+      orderNo: r.orderNo,
+    }));
+
+    if (existing) {
+      existing.files.push(...files);
+    } else {
+      groupMap.set(key, { groupKey: key, groupLabel: label, files });
+    }
+  }
+
+  return Array.from(groupMap.values()).sort((a, b) => b.groupKey.localeCompare(a.groupKey));
 }

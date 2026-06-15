@@ -1,11 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useAppStore } from '@/store/useAppStore';
-import { Download, FileSpreadsheet, FileArchive, BarChart3, TrendingUp, Users, PieChart, CheckCircle, FileText, Terminal, CalendarDays } from 'lucide-react';
+import { Download, FileSpreadsheet, FileArchive, BarChart3, TrendingUp, Users, PieChart, CheckCircle, FileText, Terminal, CalendarDays, ClipboardList, FolderTree } from 'lucide-react';
 import { AFTER_SALE_TYPE_LABELS, AFTER_SALE_TYPE_COLORS, ORDER_STATUS_LABELS, REVIEWERS, type AfterSaleType } from '@/types';
-import { exportToExcel, generateRenameList, exportRenameList, exportRenameBat, generateDailyReport, exportDailyReport } from '@/utils/fileUtils';
+import { exportToExcel, generateRenameList, exportRenameList, exportRenameBat, generateDailyReport, exportDailyReport, exportHandoverSummary, generateArchiveDirPreview } from '@/utils/fileUtils';
 import { cn } from '@/lib/utils';
 import { PieChart as RechartsPieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { DateRangeFilter } from '@/components/common/DateRangeFilter';
+
+type ArchiveGroupBy = 'order' | 'date';
 
 export function ExportPage() {
   const { getStatistics, getDateFilteredOrders } = useAppStore();
@@ -13,6 +15,7 @@ export function ExportPage() {
   const filteredOrders = getDateFilteredOrders();
   const [exporting, setExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
+  const [archiveGroupBy, setArchiveGroupBy] = useState<ArchiveGroupBy>('order');
 
   const typeChartData = Object.entries(stats.byType).map(([type, count]) => ({
     name: AFTER_SALE_TYPE_LABELS[type as keyof typeof AFTER_SALE_TYPE_LABELS],
@@ -36,6 +39,22 @@ export function ExportPage() {
       咨询: row.consult,
     }));
   }, [dailyReport]);
+
+  const handoverPreview = useMemo(() => {
+    const highRisk = filteredOrders.filter((o) => (o.isDuplicate || o.isUrgent || o.addressChanged) && o.status !== 'completed');
+    const unprocessed = filteredOrders.filter((o) => o.status !== 'completed');
+    const reviewerPending: Record<string, number> = {};
+    for (const o of unprocessed) {
+      const r = o.reviewer || '未分配';
+      reviewerPending[r] = (reviewerPending[r] || 0) + 1;
+    }
+    return { highRiskCount: highRisk.length, unprocessedCount: unprocessed.length, reviewerPending };
+  }, [filteredOrders]);
+
+  const archiveDirPreview = useMemo(
+    () => generateArchiveDirPreview(filteredOrders, archiveGroupBy),
+    [filteredOrders, archiveGroupBy],
+  );
 
   const timestamp = new Date().toISOString().slice(0, 10);
 
@@ -68,6 +87,12 @@ export function ExportPage() {
 
   const handleExportDailyReport = () => {
     exportDailyReport(filteredOrders, `统计日报_${timestamp}`);
+    setExportSuccess(true);
+    setTimeout(() => setExportSuccess(false), 3000);
+  };
+
+  const handleExportHandover = () => {
+    exportHandoverSummary(filteredOrders, `交接摘要_${timestamp}`);
     setExportSuccess(true);
     setTimeout(() => setExportSuccess(false), 3000);
   };
@@ -106,13 +131,6 @@ export function ExportPage() {
       bgColor: 'bg-purple-50',
     },
   ];
-
-  const TYPE_COLORS: Record<string, string> = {
-    退款: '#EF4444',
-    补发: '#F59E0B',
-    争议: '#8B5CF6',
-    咨询: '#0EA5E9',
-  };
 
   return (
     <div className="space-y-6">
@@ -224,6 +242,94 @@ export function ExportPage() {
           </div>
         </div>
       )}
+
+      <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+            <ClipboardList className="w-5 h-5 text-teal-600" />
+            交接摘要
+            <span className="text-sm font-normal text-slate-500 ml-2">
+              方便班次交接，一键汇总
+            </span>
+          </h3>
+          <button
+            onClick={handleExportHandover}
+            disabled={filteredOrders.length === 0}
+            className={cn(
+              'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+              filteredOrders.length === 0
+                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                : 'bg-teal-600 text-white hover:bg-teal-700',
+            )}
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            导出交接摘要（Excel）
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+            <p className="text-xl font-bold text-slate-700">{filteredOrders.length}</p>
+            <p className="text-xs text-slate-500">总订单</p>
+          </div>
+          <div className="p-3 bg-red-50 rounded-lg border border-red-100">
+            <p className="text-xl font-bold text-red-700">{handoverPreview.highRiskCount}</p>
+            <p className="text-xs text-red-600">异常优先单（未完成）</p>
+          </div>
+          <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
+            <p className="text-xl font-bold text-amber-700">{handoverPreview.unprocessedCount}</p>
+            <p className="text-xs text-amber-600">待处理</p>
+          </div>
+          <div className="p-3 bg-green-50 rounded-lg border border-green-100">
+            <p className="text-xl font-bold text-green-700">{stats.byStatus.completed}</p>
+            <p className="text-xs text-green-600">已完成</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <h4 className="text-xs font-medium text-slate-500 mb-2">分类统计</h4>
+            <div className="space-y-1.5">
+              {Object.entries(AFTER_SALE_TYPE_LABELS).map(([type, label]) => {
+                const count = stats.byType[type as AfterSaleType];
+                const completed = filteredOrders.filter((o) => o.type === type && o.status === 'completed').length;
+                return (
+                  <div key={type} className="flex items-center gap-2 text-xs">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: AFTER_SALE_TYPE_COLORS[type as AfterSaleType] }} />
+                    <span className="text-slate-600 flex-1">{label}</span>
+                    <span className="text-slate-800 font-semibold">{count}条</span>
+                    <span className="text-green-600">已完成{completed}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <h4 className="text-xs font-medium text-slate-500 mb-2">复核人待办</h4>
+            <div className="space-y-1.5">
+              {Object.entries(handoverPreview.reviewerPending)
+                .sort((a, b) => b[1] - a[1])
+                .map(([reviewer, count]) => (
+                  <div key={reviewer} className="flex items-center gap-2 text-xs">
+                    <span className={cn(
+                      'w-2 h-2 rounded-full flex-shrink-0',
+                      reviewer === '未分配' ? 'bg-slate-300' : 'bg-teal-500',
+                    )} />
+                    <span className={cn('text-slate-600 flex-1', reviewer === '未分配' && 'text-slate-400 italic')}>{reviewer}</span>
+                    <span className="text-slate-800 font-semibold">{count}条待处理</span>
+                  </div>
+                ))}
+              {Object.keys(handoverPreview.reviewerPending).length === 0 && (
+                <p className="text-xs text-slate-400">暂无待处理工单</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <p className="text-xs text-slate-400 mt-3">
+          交接摘要受右上角日期范围筛选控制，导出 Excel 包含总体概况、分类统计、异常优先单明细、复核人待办四个板块
+        </p>
+      </div>
 
       <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
         <div className="flex items-center justify-between mb-4">
@@ -460,6 +566,71 @@ export function ExportPage() {
             提示：将 .bat 脚本和附件放在同一目录下双击运行，即可自动批量重命名
           </p>
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+            <FolderTree className="w-5 h-5 text-teal-600" />
+            归档目录预览
+          </h3>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setArchiveGroupBy('order')}
+              className={cn(
+                'px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors',
+                archiveGroupBy === 'order'
+                  ? 'bg-teal-50 border-teal-300 text-teal-700'
+                  : 'border-slate-200 text-slate-500 hover:bg-slate-50',
+              )}
+            >
+              按订单分组
+            </button>
+            <button
+              onClick={() => setArchiveGroupBy('date')}
+              className={cn(
+                'px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors',
+                archiveGroupBy === 'date'
+                  ? 'bg-teal-50 border-teal-300 text-teal-700'
+                  : 'border-slate-200 text-slate-500 hover:bg-slate-50',
+              )}
+            >
+              按日期分组
+            </button>
+          </div>
+        </div>
+
+        {archiveDirPreview.length > 0 ? (
+          <div className="space-y-3 max-h-80 overflow-y-auto">
+            {archiveDirPreview.map((dir) => (
+              <div key={dir.groupKey} className="border border-slate-200 rounded-lg overflow-hidden">
+                <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200">
+                  <FolderTree className="w-4 h-4 text-teal-600" />
+                  <span className="text-sm font-medium text-slate-700">{dir.groupLabel}</span>
+                  <span className="text-xs text-slate-400 ml-auto">{dir.files.length} 个附件</span>
+                </div>
+                <div className="px-3 py-2 space-y-1">
+                  {dir.files.map((file, idx) => (
+                    <div key={idx} className="flex items-center gap-2 text-xs">
+                      <FileText className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                      <span className="text-slate-500 truncate line-through flex-1">{file.originalName}</span>
+                      <span className="text-slate-300">→</span>
+                      <span className="text-teal-700 font-medium truncate flex-1">{file.newName}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-8 text-slate-400 text-sm">
+            暂无附件数据，无法生成归档目录预览
+          </div>
+        )}
+
+        <p className="text-xs text-slate-400 mt-3">
+          预览实际落盘后的目录结构，按订单或日期切换分组方式，提前确认附件归类是否正确
+        </p>
       </div>
 
       <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">

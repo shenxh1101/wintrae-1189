@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, useMemo } from 'react';
-import { Upload, FileSpreadsheet, Play, CheckCircle, XCircle, Clock, ChevronRight, AlertCircle, FileText, Eye, ArrowRight, Repeat, AlertTriangle, MapPin, Tag, Shield } from 'lucide-react';
+import { Upload, FileSpreadsheet, Play, CheckCircle, XCircle, Clock, ChevronRight, AlertCircle, FileText, Eye, ArrowRight, Repeat, AlertTriangle, MapPin, Tag, Shield, Edit3, Save } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { parseExcelFile, detectColumns, processRawData } from '@/utils/fileUtils';
-import { AFTER_SALE_TYPE_LABELS, AFTER_SALE_TYPE_COLORS, type ColumnMapping, type AfterSaleOrder } from '@/types';
+import { AFTER_SALE_TYPE_LABELS, AFTER_SALE_TYPE_COLORS, ORDER_STATUS_LABELS, REVIEWERS, type ColumnMapping, type AfterSaleType, type AfterSaleOrder } from '@/types';
 import { cn, formatDateTime, truncateText } from '@/lib/utils';
 
 type Step = 'upload' | 'mapping' | 'preview' | 'processing';
@@ -30,6 +30,9 @@ export function TasksPage() {
   const [processProgress, setProcessProgress] = useState(0);
   const [processingStep, setProcessingStep] = useState('');
   const [processedOrders, setProcessedOrders] = useState<AfterSaleOrder[]>([]);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [editType, setEditType] = useState<AfterSaleType>('other');
+  const [editSuggestion, setEditSuggestion] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const orderGroups = useMemo<OrderGroup[]>(() => {
@@ -135,6 +138,40 @@ export function TasksPage() {
     setCurrentStep('preview');
   };
 
+  const handleTypeChange = (orderId: string, newType: AfterSaleType) => {
+    setProcessedOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId ? { ...o, type: newType } : o,
+      ),
+    );
+  };
+
+  const handleSuggestionChange = (orderId: string, newSuggestion: string) => {
+    setProcessedOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId ? { ...o, suggestion: newSuggestion } : o,
+      ),
+    );
+  };
+
+  const startEdit = (order: AfterSaleOrder) => {
+    setEditingOrderId(order.id);
+    setEditType(order.type);
+    setEditSuggestion(order.suggestion);
+  };
+
+  const saveEdit = () => {
+    if (editingOrderId) {
+      handleTypeChange(editingOrderId, editType);
+      handleSuggestionChange(editingOrderId, editSuggestion);
+      setEditingOrderId(null);
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingOrderId(null);
+  };
+
   const handleConfirmImport = async () => {
     if (processedOrders.length === 0) return;
 
@@ -194,6 +231,7 @@ export function TasksPage() {
     setCurrentStep('upload');
     setProcessProgress(0);
     setProcessingStep('');
+    setEditingOrderId(null);
   };
 
   const availableColumns = previewData.length > 0 ? Object.keys(previewData[0]) : [];
@@ -433,10 +471,10 @@ export function TasksPage() {
               <h5 className="text-sm font-medium text-slate-600 mb-2">
                 按订单维度预览
                 <span className="text-xs text-slate-400 font-normal ml-2">
-                  （重复申诉、紧急件排前）
+                  （重复申诉、紧急件排前，点击「改」可修正分类和建议）
                 </span>
               </h5>
-              <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-80 overflow-y-auto">
+              <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-96 overflow-y-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 sticky top-0 z-10">
                     <tr className="border-b border-slate-200">
@@ -446,75 +484,139 @@ export function TasksPage() {
                       <th className="px-3 py-2 text-left font-medium text-slate-600">分类</th>
                       <th className="px-3 py-2 text-center font-medium text-slate-600">标记</th>
                       <th className="px-3 py-2 text-left font-medium text-slate-600">留言摘要</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600">处理建议</th>
+                      <th className="px-3 py-2 text-center font-medium text-slate-600">操作</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {orderGroups.map((group) => (
-                      <tr
-                        key={group.orderNo}
-                        className={cn(
-                          'border-b border-slate-100 transition-colors',
-                          group.hasDuplicate && 'bg-purple-50/50',
-                        )}
-                        style={group.hasDuplicate ? { boxShadow: 'inset 3px 0 0 0 #7c3aed' } : {}}
-                      >
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono text-xs text-slate-700">{group.orderNo}</span>
-                            {group.hasDuplicate && (
-                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-600 text-white text-[10px] font-bold rounded-full animate-pulse">
-                                <Repeat className="w-2.5 h-2.5" />
-                                {group.count}次
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-slate-700">{group.buyerName}</td>
-                        <td className="px-3 py-2 text-center">
-                          <span className={cn(
-                            'inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold',
-                            group.count > 1 ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600',
-                          )}>
-                            {group.count}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-1">
-                            {group.types.map((type) => (
-                              <span
-                                key={type}
-                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium"
-                                style={{
-                                  backgroundColor: AFTER_SALE_TYPE_COLORS[type as keyof typeof AFTER_SALE_TYPE_COLORS] + '20',
-                                  color: AFTER_SALE_TYPE_COLORS[type as keyof typeof AFTER_SALE_TYPE_COLORS],
-                                }}
+                    {orderGroups.map((group) => {
+                      const primaryOrder = group.orders[0];
+                      const isEditing = editingOrderId === primaryOrder.id;
+                      return (
+                        <tr
+                          key={group.orderNo}
+                          className={cn(
+                            'border-b border-slate-100 transition-colors',
+                            group.hasDuplicate && 'bg-purple-50/50',
+                            isEditing && 'bg-teal-50/50',
+                          )}
+                          style={group.hasDuplicate ? { boxShadow: 'inset 3px 0 0 0 #7c3aed' } : {}}
+                        >
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-xs text-slate-700">{group.orderNo}</span>
+                              {group.hasDuplicate && (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-600 text-white text-[10px] font-bold rounded-full animate-pulse">
+                                  <Repeat className="w-2.5 h-2.5" />
+                                  {group.count}次
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-slate-700">{group.buyerName}</td>
+                          <td className="px-3 py-2 text-center">
+                            <span className={cn(
+                              'inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold',
+                              group.count > 1 ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600',
+                            )}>
+                              {group.count}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <select
+                                value={editType}
+                                onChange={(e) => setEditType(e.target.value as AfterSaleType)}
+                                className="px-2 py-1 text-xs border border-teal-300 rounded focus:ring-2 focus:ring-teal-500 bg-white"
                               >
-                                {AFTER_SALE_TYPE_LABELS[type as keyof typeof AFTER_SALE_TYPE_LABELS]}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center justify-center gap-1">
-                            {group.isUrgent && (
-                              <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                                {Object.entries(AFTER_SALE_TYPE_LABELS).map(([value, label]) => (
+                                  <option key={value} value={value}>{label}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div className="flex flex-wrap gap-1">
+                                {[...new Set(group.orders.map((o) => o.type))].map((type) => (
+                                  <span
+                                    key={type}
+                                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium"
+                                    style={{
+                                      backgroundColor: AFTER_SALE_TYPE_COLORS[type as keyof typeof AFTER_SALE_TYPE_COLORS] + '20',
+                                      color: AFTER_SALE_TYPE_COLORS[type as keyof typeof AFTER_SALE_TYPE_COLORS],
+                                    }}
+                                  >
+                                    {AFTER_SALE_TYPE_LABELS[type as keyof typeof AFTER_SALE_TYPE_LABELS]}
+                                  </span>
+                                ))}
+                              </div>
                             )}
-                            {group.hasDuplicate && (
-                              <Repeat className="w-3.5 h-3.5 text-purple-500" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center justify-center gap-1">
+                              {group.isUrgent && (
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                              )}
+                              {group.hasDuplicate && (
+                                <Repeat className="w-3.5 h-3.5 text-purple-500" />
+                              )}
+                              {group.hasAddressChange && (
+                                <MapPin className="w-3.5 h-3.5 text-green-500" />
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-slate-500 max-w-[160px]">
+                            {truncateText(group.orders[0].messages[0]?.content || '', 40)}
+                          </td>
+                          <td className="px-3 py-2 max-w-[180px]">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editSuggestion}
+                                onChange={(e) => setEditSuggestion(e.target.value)}
+                                className="w-full px-2 py-1 text-xs border border-teal-300 rounded focus:ring-2 focus:ring-teal-500 bg-white"
+                              />
+                            ) : (
+                              <p className="text-xs text-slate-600 truncate">
+                                {truncateText(primaryOrder.suggestion, 25)}
+                              </p>
                             )}
-                            {group.hasAddressChange && (
-                              <MapPin className="w-3.5 h-3.5 text-green-500" />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            {isEditing ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  onClick={saveEdit}
+                                  className="p-1 rounded hover:bg-teal-100 text-teal-600"
+                                  title="保存"
+                                >
+                                  <Save className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={cancelEdit}
+                                  className="p-1 rounded hover:bg-slate-100 text-slate-500"
+                                  title="取消"
+                                >
+                                  <XCircle className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => startEdit(primaryOrder)}
+                                className="p-1 rounded hover:bg-teal-100 text-slate-500 hover:text-teal-600 transition-colors"
+                                title="修正分类和建议"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
                             )}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-slate-500 max-w-xs">
-                          {truncateText(group.orders[0].messages[0]?.content || '', 40)}
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
+              <p className="text-xs text-slate-400 mt-2">
+                修正后分类和建议会在确认入库时一并写入，同一订单组内的所有记录会同步修改
+              </p>
             </div>
 
             <div className="flex items-center justify-between pt-3 border-t border-slate-200">
