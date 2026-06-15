@@ -138,18 +138,18 @@ export function TasksPage() {
     setCurrentStep('preview');
   };
 
-  const handleTypeChange = (orderId: string, newType: AfterSaleType) => {
+  const handleTypeChange = (orderNo: string, newType: AfterSaleType) => {
     setProcessedOrders((prev) =>
       prev.map((o) =>
-        o.id === orderId ? { ...o, type: newType } : o,
+        o.orderNo === orderNo ? { ...o, type: newType } : o,
       ),
     );
   };
 
-  const handleSuggestionChange = (orderId: string, newSuggestion: string) => {
+  const handleSuggestionChange = (orderNo: string, newSuggestion: string) => {
     setProcessedOrders((prev) =>
       prev.map((o) =>
-        o.id === orderId ? { ...o, suggestion: newSuggestion } : o,
+        o.orderNo === orderNo ? { ...o, suggestion: newSuggestion } : o,
       ),
     );
   };
@@ -162,8 +162,11 @@ export function TasksPage() {
 
   const saveEdit = () => {
     if (editingOrderId) {
-      handleTypeChange(editingOrderId, editType);
-      handleSuggestionChange(editingOrderId, editSuggestion);
+      const order = processedOrders.find((o) => o.id === editingOrderId);
+      if (order) {
+        handleTypeChange(order.orderNo, editType);
+        handleSuggestionChange(order.orderNo, editSuggestion);
+      }
       setEditingOrderId(null);
     }
   };
