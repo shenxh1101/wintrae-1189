@@ -18,6 +18,10 @@ interface AppState {
     keyword?: string;
     reviewer?: string;
   };
+  dateRange: {
+    start?: string;
+    end?: string;
+  };
   currentPage: number;
   pageSize: number;
 }
@@ -30,7 +34,11 @@ interface AppActions {
   setSelectedOrderId: (id: string | null) => void;
   setFilters: (filters: Partial<AppState['filters']>) => void;
   resetFilters: () => void;
+  setDateRange: (range: Partial<AppState['dateRange']>) => void;
+  resetDateRange: () => void;
   setCurrentPage: (page: number) => void;
+
+  getDateFilteredOrders: () => AfterSaleOrder[];
 
   addCategoryRule: (rule: Omit<CategoryRule, 'id'>) => void;
   updateCategoryRule: (id: string, updates: Partial<CategoryRule>) => void;
@@ -66,6 +74,10 @@ const initialState: AppState = {
   tasks: [],
   selectedOrderId: null,
   filters: {},
+  dateRange: {
+    start: undefined,
+    end: undefined,
+  },
   currentPage: 1,
   pageSize: 20,
 };
@@ -108,7 +120,37 @@ export const useAppStore = create<AppState & AppActions>()(
           currentPage: 1,
         }),
 
+      setDateRange: (range) =>
+        set((state) => ({
+          dateRange: { ...state.dateRange, ...range },
+          currentPage: 1,
+        })),
+
+      resetDateRange: () =>
+        set({
+          dateRange: { start: undefined, end: undefined },
+          currentPage: 1,
+        }),
+
       setCurrentPage: (page) => set({ currentPage: page }),
+
+      getDateFilteredOrders: () => {
+        const { orders, dateRange } = get();
+        let filtered = [...orders];
+
+        if (dateRange.start) {
+          const start = new Date(dateRange.start);
+          start.setHours(0, 0, 0, 0);
+          filtered = filtered.filter((o) => new Date(o.createdAt) >= start);
+        }
+        if (dateRange.end) {
+          const end = new Date(dateRange.end);
+          end.setHours(23, 59, 59, 999);
+          filtered = filtered.filter((o) => new Date(o.createdAt) <= end);
+        }
+
+        return filtered;
+      },
 
       addCategoryRule: (rule) =>
         set((state) => ({
@@ -155,8 +197,8 @@ export const useAppStore = create<AppState & AppActions>()(
         })),
 
       getFilteredOrders: () => {
-        const { orders, filters } = get();
-        let filtered = [...orders];
+        const { filters, getDateFilteredOrders } = get();
+        let filtered = [...getDateFilteredOrders()];
 
         if (filters.type) {
           filtered = filtered.filter((o) => o.type === filters.type);
@@ -200,7 +242,8 @@ export const useAppStore = create<AppState & AppActions>()(
       },
 
       getStatistics: () => {
-        const { orders } = get();
+        const { getDateFilteredOrders } = get();
+        const orders = getDateFilteredOrders();
 
         const byType: Record<AfterSaleType, number> = {
           refund: 0,

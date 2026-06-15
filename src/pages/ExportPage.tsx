@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { useAppStore } from '@/store/useAppStore';
-import { Download, FileSpreadsheet, FileArchive, BarChart3, Calendar, TrendingUp, Users, PieChart, CheckCircle } from 'lucide-react';
+import { Download, FileSpreadsheet, FileArchive, BarChart3, TrendingUp, Users, PieChart, CheckCircle, FileText, Terminal } from 'lucide-react';
 import { AFTER_SALE_TYPE_LABELS, AFTER_SALE_TYPE_COLORS, ORDER_STATUS_LABELS, REVIEWERS, type AfterSaleType } from '@/types';
-import { exportToExcel, generateArchiveFileName } from '@/utils/fileUtils';
+import { exportToExcel, generateRenameList, exportRenameList, exportRenameBat } from '@/utils/fileUtils';
 import { cn } from '@/lib/utils';
 import { PieChart as RechartsPieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { DateRangeFilter } from '@/components/common/DateRangeFilter';
 
 export function ExportPage() {
-  const { orders, getStatistics } = useAppStore();
+  const { getStatistics, getDateFilteredOrders } = useAppStore();
   const stats = getStatistics();
-  const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const filteredOrders = getDateFilteredOrders();
   const [exporting, setExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
 
@@ -21,35 +22,39 @@ export function ExportPage() {
 
   const reviewerStats = REVIEWERS.map((reviewer) => ({
     name: reviewer,
-    处理数: orders.filter((o) => o.reviewer === reviewer).length,
+    处理数: filteredOrders.filter((o) => o.reviewer === reviewer).length,
   })).filter((r) => r.处理数 > 0);
+
+  const timestamp = new Date().toISOString().slice(0, 10);
 
   const handleExportExcel = () => {
     setExporting(true);
     setTimeout(() => {
-      const timestamp = new Date().toISOString().slice(0, 10);
-      exportToExcel(orders, `售后数据汇总_${timestamp}`);
+      exportToExcel(filteredOrders, `售后数据汇总_${timestamp}`);
       setExporting(false);
       setExportSuccess(true);
       setTimeout(() => setExportSuccess(false), 3000);
-    }, 800);
+    }, 500);
   };
 
   const handleExportByType = (type: AfterSaleType) => {
-    const filteredOrders = orders.filter((o) => o.type === type);
-    const timestamp = new Date().toISOString().slice(0, 10);
-    exportToExcel(filteredOrders, `${AFTER_SALE_TYPE_LABELS[type]}_${timestamp}`);
+    const typeOrders = filteredOrders.filter((o) => o.type === type);
+    exportToExcel(typeOrders, `${AFTER_SALE_TYPE_LABELS[type]}_${timestamp}`);
   };
 
-  const handleGenerateArchiveNames = () => {
-    const archiveNames = orders.slice(0, 10).map((order, idx) => ({
-      original: order.attachments[0] || `附件${idx + 1}.jpg`,
-      newName: generateArchiveFileName(order, idx + 1) + '.jpg',
-    }));
-    return archiveNames;
+  const handleExportRenameExcel = () => {
+    exportRenameList(filteredOrders, `附件改名清单_${timestamp}`);
+    setExportSuccess(true);
+    setTimeout(() => setExportSuccess(false), 3000);
   };
 
-  const archivePreview = handleGenerateArchiveNames();
+  const handleExportRenameBat = () => {
+    exportRenameBat(filteredOrders, `批量重命名_${timestamp}`);
+    setExportSuccess(true);
+    setTimeout(() => setExportSuccess(false), 3000);
+  };
+
+  const archivePreview = generateRenameList(filteredOrders).slice(0, 15);
 
   const statCards = [
     {
@@ -74,8 +79,8 @@ export function ExportPage() {
       bgColor: 'bg-amber-50',
     },
     {
-      title: '复核人员',
-      value: REVIEWERS.length,
+      title: '重复申诉',
+      value: stats.duplicateCount,
       icon: Users,
       color: 'text-purple-500',
       bgColor: 'bg-purple-50',
@@ -84,29 +89,12 @@ export function ExportPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">导出归档</h1>
           <p className="text-slate-500 text-sm mt-1">统计摘要与批量导出归档</p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-slate-400" />
-            <input
-              type="date"
-              value={dateRange.start}
-              onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-              className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-            />
-            <span className="text-slate-400">至</span>
-            <input
-              type="date"
-              value={dateRange.end}
-              onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-              className="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-            />
-          </div>
-        </div>
+        <DateRangeFilter />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -219,10 +207,12 @@ export function ExportPage() {
           <div className="space-y-3">
             <button
               onClick={handleExportExcel}
-              disabled={exporting}
+              disabled={exporting || filteredOrders.length === 0}
               className={cn(
                 'w-full flex items-center justify-between p-4 rounded-lg border transition-all',
-                exporting
+                filteredOrders.length === 0
+                  ? 'bg-slate-50 border-slate-200 opacity-50 cursor-not-allowed'
+                  : exporting
                   ? 'bg-teal-50 border-teal-300'
                   : 'border-slate-200 hover:border-teal-300 hover:bg-teal-50',
               )}
@@ -232,7 +222,7 @@ export function ExportPage() {
                   <FileSpreadsheet className="w-5 h-5 text-green-600" />
                 </div>
                 <div className="text-left">
-                  <p className="font-medium text-slate-800">导出全部数据</p>
+                  <p className="font-medium text-slate-800">导出全部数据（{filteredOrders.length}条）</p>
                   <p className="text-xs text-slate-500">包含所有字段的完整 Excel 报表</p>
                 </div>
               </div>
@@ -245,22 +235,29 @@ export function ExportPage() {
 
             <p className="text-xs text-slate-500 font-medium mt-4">按类型导出</p>
             <div className="grid grid-cols-2 gap-2">
-              {Object.entries(AFTER_SALE_TYPE_LABELS).map(([type, label]) => (
-                <button
-                  key={type}
-                  onClick={() => handleExportByType(type as AfterSaleType)}
-                  className="flex items-center gap-2 p-3 rounded-lg border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-colors text-left"
-                >
-                  <div
-                    className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: AFTER_SALE_TYPE_COLORS[type as AfterSaleType] }}
-                  />
-                  <span className="text-sm text-slate-700">{label}</span>
-                  <span className="text-xs text-slate-400 ml-auto">
-                    {stats.byType[type as AfterSaleType]}条
-                  </span>
-                </button>
-              ))}
+              {Object.entries(AFTER_SALE_TYPE_LABELS).map(([type, label]) => {
+                const count = stats.byType[type as AfterSaleType];
+                return (
+                  <button
+                    key={type}
+                    onClick={() => handleExportByType(type as AfterSaleType)}
+                    disabled={count === 0}
+                    className={cn(
+                      'flex items-center gap-2 p-3 rounded-lg border transition-colors text-left',
+                      count === 0
+                        ? 'border-slate-100 bg-slate-50 opacity-50 cursor-not-allowed'
+                        : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50',
+                    )}
+                  >
+                    <div
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: AFTER_SALE_TYPE_COLORS[type as AfterSaleType] }}
+                    />
+                    <span className="text-sm text-slate-700">{label}</span>
+                    <span className="text-xs text-slate-400 ml-auto">{count}条</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -271,31 +268,63 @@ export function ExportPage() {
             附件批量改名
           </h3>
           <p className="text-sm text-slate-500 mb-4">
-            自动按照「订单号_类型_日期_序号」格式重命名附件
+            自动按照「订单号_类型_日期_序号」格式重命名附件，共 {archivePreview.length > 0 ? generateRenameList(filteredOrders).length : 0} 个文件待处理
           </p>
-          <div className="bg-slate-50 rounded-lg p-3 max-h-64 overflow-y-auto">
-            <div className="space-y-2">
-              {archivePreview.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-400 flex-shrink-0">{idx + 1}.</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-slate-500 truncate line-through">{item.original}</p>
-                    <p className="text-teal-700 font-medium truncate">↓ {item.newName}</p>
+          <div className="bg-slate-50 rounded-lg p-3 max-h-52 overflow-y-auto border border-slate-200">
+            <div className="space-y-1.5">
+              {archivePreview.length > 0 ? (
+                archivePreview.map((item, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-xs">
+                    <span className="text-slate-400 flex-shrink-0 w-6 text-right">{idx + 1}.</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-slate-500 truncate line-through">{item.originalName}</p>
+                      <p className="text-teal-700 font-medium truncate">→ {item.newName}</p>
+                    </div>
                   </div>
+                ))
+              ) : (
+                <div className="text-center py-6 text-slate-400 text-sm">
+                  暂无数据
                 </div>
-              ))}
+              )}
+              {generateRenameList(filteredOrders).length > archivePreview.length && (
+                <p className="text-xs text-slate-400 text-center pt-2 border-t border-slate-200 mt-2">
+                  ... 还有 {generateRenameList(filteredOrders).length - archivePreview.length} 个文件
+                </p>
+              )}
             </div>
           </div>
-          <button
-            className="w-full mt-4 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm font-medium"
-            onClick={() => {
-              setExportSuccess(true);
-              setTimeout(() => setExportSuccess(false), 3000);
-            }}
-          >
-            <Download className="w-4 h-4" />
-            生成改名清单
-          </button>
+          <div className="grid grid-cols-2 gap-2 mt-4">
+            <button
+              onClick={handleExportRenameExcel}
+              disabled={filteredOrders.length === 0}
+              className={cn(
+                'inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                filteredOrders.length === 0
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  : 'bg-teal-600 text-white hover:bg-teal-700',
+              )}
+            >
+              <FileText className="w-4 h-4" />
+              导出改名清单（Excel）
+            </button>
+            <button
+              onClick={handleExportRenameBat}
+              disabled={filteredOrders.length === 0}
+              className={cn(
+                'inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                filteredOrders.length === 0
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  : 'bg-slate-700 text-white hover:bg-slate-800',
+              )}
+            >
+              <Terminal className="w-4 h-4" />
+              下载批处理脚本（.bat）
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mt-3">
+            提示：将 .bat 脚本和附件放在同一目录下双击运行，即可自动批量重命名
+          </p>
         </div>
       </div>
 
@@ -307,7 +336,7 @@ export function ExportPage() {
             { label: '买家昵称', desc: '买家账号名称' },
             { label: '售后类型', desc: '自动分类结果' },
             { label: '是否紧急', desc: '紧急件标记' },
-            { label: '是否重复', desc: '重复申诉标记' },
+            { label: '是否重复申诉', desc: '重复申诉标记及次数' },
             { label: '地址变更', desc: '是否修改地址' },
             { label: '留言内容', desc: '买家留言全文' },
             { label: '处理建议', desc: '系统推荐方案' },

@@ -21,6 +21,8 @@ export interface AfterSaleOrder {
   isUrgent: boolean;
   isDuplicate: boolean;
   duplicateOf?: string;
+  duplicateCount?: number;
+  duplicateTotal?: number;
   messages: Message[];
   originalAddress?: string;
   newAddress?: string;

@@ -1,11 +1,12 @@
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useAppStore } from '@/store/useAppStore';
 import { AFTER_SALE_TYPE_LABELS, AFTER_SALE_TYPE_COLORS, ORDER_STATUS_LABELS } from '@/types';
-import { FileText, AlertTriangle, Repeat, MapPin, Clock, TrendingUp } from 'lucide-react';
+import { FileText, AlertTriangle, Repeat, MapPin, Clock, TrendingUp, Play } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { DateRangeFilter } from '@/components/common/DateRangeFilter';
 
 export function DashboardPage() {
-  const { getStatistics, orders } = useAppStore();
+  const { getStatistics, getDateFilteredOrders } = useAppStore();
   const stats = getStatistics();
 
   const typeChartData = Object.entries(stats.byType).map(([type, count]) => ({
@@ -19,7 +20,7 @@ export function DashboardPage() {
     数量: count,
   }));
 
-  const urgentOrders = orders.filter((o) => o.isUrgent).slice(0, 5);
+  const urgentOrders = getDateFilteredOrders().filter((o) => o.isUrgent).slice(0, 5);
 
   const statCards = [
     {
@@ -58,18 +59,21 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">数据概览</h1>
           <p className="text-slate-500 text-sm mt-1">售后数据统计与分析</p>
         </div>
-        <Link
-          to="/tasks"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm font-medium shadow-sm"
-        >
-          <Play className="w-4 h-4" />
-          新建任务
-        </Link>
+        <div className="flex items-center gap-3 flex-wrap">
+          <DateRangeFilter />
+          <Link
+            to="/tasks"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm font-medium shadow-sm"
+          >
+            <Play className="w-4 h-4" />
+            新建任务
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -190,5 +194,3 @@ export function DashboardPage() {
     </div>
   );
 }
-
-import { Play } from 'lucide-react';

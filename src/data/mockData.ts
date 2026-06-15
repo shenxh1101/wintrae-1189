@@ -145,22 +145,22 @@ export function generateMockOrders(count: number = 50): AfterSaleOrder[] {
   const reviewers = ['张小明', '李小红', '王大伟', '赵小丽'];
 
   const orders: AfterSaleOrder[] = [];
-  const usedOrderNos: string[] = [];
+  const orderCounter: Record<string, number> = {};
+  const orderBuyerMap: Record<string, { name: string; phone: string }> = {};
 
-  for (let i = 0; i < count; i++) {
+  const duplicateGroups = 5;
+  const totalNormal = count - duplicateGroups * 2;
+
+  for (let i = 0; i < totalNormal; i++) {
     const type = types[Math.floor(Math.random() * types.length)];
-    const messageCount = Math.floor(Math.random() * 4) + 1;
+    const messageCount = Math.floor(Math.random() * 3) + 1;
     const messages = generateMockMessages(type, messageCount);
 
-    let orderNo = generateOrderNo();
-    let isDuplicate = false;
-
-    if (Math.random() < 0.15 && usedOrderNos.length > 0) {
-      orderNo = usedOrderNos[Math.floor(Math.random() * usedOrderNos.length)];
-      isDuplicate = true;
-    } else {
-      usedOrderNos.push(orderNo);
-    }
+    const orderNo = generateOrderNo();
+    const buyerName = buyerNames[Math.floor(Math.random() * buyerNames.length)];
+    const buyerPhone = generatePhone();
+    orderCounter[orderNo] = 1;
+    orderBuyerMap[orderNo] = { name: buyerName, phone: buyerPhone };
 
     const statusIndex = Math.floor(Math.random() * statuses.length);
     const status = statuses[statusIndex];
@@ -175,15 +175,19 @@ export function generateMockOrders(count: number = 50): AfterSaleOrder[] {
       '杭州市西湖区文三路478号华星时代广场',
     ];
 
+    const createdAt = new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString();
+
     const order: AfterSaleOrder = {
       id: generateId(),
       orderNo,
-      buyerName: buyerNames[Math.floor(Math.random() * buyerNames.length)],
-      buyerPhone: generatePhone(),
+      buyerName,
+      buyerPhone,
       type,
       status,
       isUrgent,
-      isDuplicate,
+      isDuplicate: false,
+      duplicateCount: 1,
+      duplicateTotal: 1,
       messages,
       originalAddress: addresses[Math.floor(Math.random() * addresses.length)],
       newAddress: addressChanged ? addresses[Math.floor(Math.random() * addresses.length)] : undefined,
@@ -192,12 +196,61 @@ export function generateMockOrders(count: number = 50): AfterSaleOrder[] {
       reviewer: status !== 'pending' ? reviewers[Math.floor(Math.random() * reviewers.length)] : undefined,
       remark: status === 'completed' ? '已处理完成，客户满意' : undefined,
       attachments: Math.random() < 0.3 ? ['证明图片1.jpg', '快递单照片.jpg'] : [],
-      createdAt: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt,
       updatedAt: new Date().toISOString(),
     };
 
     orders.push(order);
   }
 
-  return orders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  for (let g = 0; g < duplicateGroups; g++) {
+    const orderNo = generateOrderNo();
+    const buyerName = buyerNames[Math.floor(Math.random() * buyerNames.length)];
+    const buyerPhone = generatePhone();
+    const baseType = types[Math.floor(Math.random() * 3)];
+    const totalInGroup = Math.floor(Math.random() * 2) + 2;
+    orderCounter[orderNo] = totalInGroup;
+    orderBuyerMap[orderNo] = { name: buyerName, phone: buyerPhone };
+
+    for (let n = 0; n < totalInGroup; n++) {
+      const typeVariation = n === 0 ? baseType : (Math.random() < 0.5 ? baseType : 'dispute');
+      const messages = generateMockMessages(typeVariation, 1);
+      const isUrgent = n >= 1 || Math.random() < 0.4;
+
+      const createdAt = new Date(Date.now() - (n * 6 + Math.random() * 12) * 60 * 60 * 1000).toISOString();
+
+      const order: AfterSaleOrder = {
+        id: generateId(),
+        orderNo,
+        buyerName,
+        buyerPhone,
+        type: typeVariation,
+        status: n === 0 ? statuses[Math.floor(Math.random() * statuses.length)] : 'pending',
+        isUrgent,
+        isDuplicate: true,
+        duplicateCount: n + 1,
+        duplicateTotal: totalInGroup,
+        messages,
+        originalAddress: '北京市朝阳区建国路88号SOHO现代城A座1201',
+        newAddress: undefined,
+        addressChanged: false,
+        suggestion: mockCategoryRules.find((r) => r.type === typeVariation)?.defaultSuggestion || '请人工核实后处理',
+        reviewer: undefined,
+        remark: undefined,
+        attachments: isUrgent ? ['申诉截图.jpg'] : [],
+        createdAt,
+        updatedAt: new Date().toISOString(),
+      };
+
+      orders.push(order);
+    }
+  }
+
+  return orders.sort((a, b) => {
+    if (a.isDuplicate && !b.isDuplicate) return -1;
+    if (!a.isDuplicate && b.isDuplicate) return 1;
+    if (a.isUrgent && !b.isUrgent) return -1;
+    if (!a.isUrgent && b.isUrgent) return 1;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
 }

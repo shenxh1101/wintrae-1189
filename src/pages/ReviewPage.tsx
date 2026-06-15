@@ -4,6 +4,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { Search, Filter, ChevronLeft, ChevronRight, Check, X, Edit3, Save, User, Clock, MapPin, AlertTriangle, Repeat, FileText, MessageSquare, Tag } from 'lucide-react';
 import { AFTER_SALE_TYPE_LABELS, AFTER_SALE_TYPE_COLORS, ORDER_STATUS_LABELS, REVIEWERS, type AfterSaleType, type OrderStatus, type AfterSaleOrder } from '@/types';
 import { cn, formatDateTime, truncateText } from '@/lib/utils';
+import { DateRangeFilter } from '@/components/common/DateRangeFilter';
 
 export function ReviewPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -95,14 +96,15 @@ export function ReviewPage() {
   return (
     <div className="flex gap-6 h-[calc(100vh-8rem)]">
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-bold text-slate-800">结果复核</h1>
             <p className="text-slate-500 text-sm mt-1">
               共 {filteredOrders.length} 条记录，已选择 {selectedIds.length} 条
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <DateRangeFilter />
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
@@ -252,12 +254,14 @@ export function ReviewPage() {
                     key={order.id}
                     onClick={() => handleOrderClick(order)}
                     className={cn(
-                      'border-b border-slate-100 cursor-pointer transition-colors',
+                      'border-b cursor-pointer transition-colors',
                       selectedOrderId === order.id
                         ? 'bg-teal-50 border-teal-200'
-                        : 'hover:bg-slate-50',
-                      order.isUrgent && 'bg-amber-50/50',
+                        : 'hover:bg-slate-50 border-slate-100',
+                      order.isUrgent && !order.isDuplicate && 'bg-amber-50/50',
+                      order.isDuplicate && 'bg-purple-50/70',
                     )}
+                    style={order.isDuplicate ? { boxShadow: 'inset 3px 0 0 0 #7c3aed' } : {}}
                   >
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <input
@@ -267,7 +271,17 @@ export function ReviewPage() {
                         className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                       />
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-700">{order.orderNo}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs text-slate-700">{order.orderNo}</span>
+                        {order.isDuplicate && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-600 text-white text-[10px] font-bold rounded-full shadow-sm animate-pulse">
+                            <Repeat className="w-3 h-3" />
+                            第{order.duplicateCount || 1}次 / 共{order.duplicateTotal || 2}次申诉
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-slate-700">{order.buyerName}</td>
                     <td className="px-4 py-3">
                       <span
@@ -439,9 +453,9 @@ export function ReviewPage() {
                 </span>
               )}
               {selectedOrder.isDuplicate && (
-                <span className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
-                  <Repeat className="w-3 h-3" />
-                  重复申诉
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-purple-600 text-white rounded text-xs font-semibold shadow-sm">
+                  <Repeat className="w-3.5 h-3.5" />
+                  重复申诉 · 第{selectedOrder.duplicateCount || 1}次 / 共{selectedOrder.duplicateTotal || 2}次
                 </span>
               )}
               {selectedOrder.addressChanged && (

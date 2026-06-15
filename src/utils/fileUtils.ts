@@ -67,7 +67,8 @@ export function processRawData(
   mapping: ColumnMapping,
   categoryRules: CategoryRule[],
 ): AfterSaleOrder[] {
-  const orderMap = new Map<string, AfterSaleOrder>();
+  const orders: AfterSaleOrder[] = [];
+  const orderCountMap = new Map<string, number>();
   const sortedRules = [...categoryRules].filter((r) => r.enabled).sort((a, b) => b.priority - a.priority);
 
   for (const row of rawData) {
@@ -81,6 +82,9 @@ export function processRawData(
     const orderNo = rawOrderNo || extractOrderNo(content) || generateId();
     const phone = buyerPhone || extractPhone(content) || '';
 
+    const currentCount = orderCountMap.get(orderNo) || 0;
+    orderCountMap.set(orderNo, currentCount + 1);
+
     const message: Message = {
       id: generateId(),
       content,
@@ -88,41 +92,40 @@ export function processRawData(
       source: 'buyer',
     };
 
-    if (orderMap.has(orderNo)) {
-      const order = orderMap.get(orderNo)!;
-      order.messages.push(message);
-      order.updatedAt = new Date().toISOString();
-    } else {
-      const fullContent = content + ' ' + address;
-      const { type, suggestion } = classifyOrder(fullContent, sortedRules);
-      const { hasChange, originalAddress: origAddr, newAddress: newAddr } = extractAddressChange(fullContent);
+    const fullContent = content + ' ' + address;
+    const { type, suggestion } = classifyOrder(fullContent, sortedRules);
+    const { hasChange, originalAddress: origAddr, newAddress: newAddr } = extractAddressChange(fullContent);
 
-      const order: AfterSaleOrder = {
-        id: generateId(),
-        orderNo,
-        buyerName: buyerName || '未知用户',
-        buyerPhone: phone,
-        type,
-        status: 'pending',
-        isUrgent: false,
-        isDuplicate: false,
-        messages: [message],
-        originalAddress: origAddr || address || undefined,
-        newAddress: hasChange ? newAddr : undefined,
-        addressChanged: hasChange,
-        suggestion,
-        attachments: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+    const order: AfterSaleOrder = {
+      id: generateId(),
+      orderNo,
+      buyerName: buyerName || '未知用户',
+      buyerPhone: phone,
+      type,
+      status: 'pending',
+      isUrgent: false,
+      isDuplicate: false,
+      duplicateCount: currentCount + 1,
+      messages: [message],
+      originalAddress: origAddr || address || undefined,
+      newAddress: hasChange ? newAddr : undefined,
+      addressChanged: hasChange,
+      suggestion,
+      attachments: [],
+      createdAt: messageTime && messageTime.length > 4 ? new Date(messageTime).toISOString() : new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
 
-      orderMap.set(orderNo, order);
-    }
+    orders.push(order);
   }
 
-  const orders = Array.from(orderMap.values());
   markUrgentOrders(orders, sortedRules);
-  markDuplicateOrders(orders);
+
+  for (const order of orders) {
+    const count = orderCountMap.get(order.orderNo) || 0;
+    order.isDuplicate = count > 1;
+    order.duplicateTotal = count;
+  }
 
   return orders;
 }
@@ -239,4 +242,107 @@ export function generateArchiveFileName(order: AfterSaleOrder, index: number): s
     other: '其他',
   }[order.type];
   return `${order.orderNo}_${typeShort}_${dateStr}_${String(index).padStart(3, '0')}`;
+}
+
+export interface RenameItem {
+  originalName: string;
+  newName: string;
+  orderNo: string;
+  type: string;
+  buyerName: string;
+}
+
+export function generateRenameList(orders: AfterSaleOrder[]): RenameItem[] {
+  const items: RenameItem[] = [];
+  const typeLabels: Record<string, string> = {
+    refund: '退款',
+    reissue: '补发',
+    dispute: '争议',
+    consult: '咨询',
+    other: '其他',
+  };
+
+  orders.forEach((order, orderIndex) => {
+    const attachments = order.attachments.length > 0
+      ? order.attachments
+      : [`附件_${String(orderIndex + 1).padStart(3, '0')}.jpg`];
+
+    attachments.forEach((att, attIndex) => {
+      const globalIndex = items.length + 1;
+      const ext = att.includes('.') ? att.slice(att.lastIndexOf('.')) : '.jpg';
+      const newBaseName = generateArchiveFileName(order, globalIndex);
+      items.push({
+        originalName: att,
+        newName: newBaseName + ext,
+        orderNo: order.orderNo,
+        type: typeLabels[order.type] || order.type,
+        buyerName: order.buyerName,
+      });
+    });
+  });
+
+  return items;
+}
+
+export function exportRenameList(orders: AfterSaleOrder[], filename: string): void {
+  const renameItems = generateRenameList(orders);
+
+  const exportData = renameItems.map((item, idx) => ({
+    序号: idx + 1,
+    订单号: item.orderNo,
+    买家: item.buyerName,
+    售后类型: item.type,
+    原文件名: item.originalName,
+    新文件名: item.newName,
+    重命名命令: `ren "${item.originalName}" "${item.newName}"`,
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(exportData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, '附件改名清单');
+
+  const colWidths = [
+    { wch: 6 },
+    { wch: 20 },
+    { wch: 15 },
+    { wch: 10 },
+    { wch: 30 },
+    { wch: 40 },
+    { wch: 60 },
+  ];
+  worksheet['!cols'] = colWidths;
+
+  XLSX.writeFile(workbook, `${filename}.xlsx`);
+}
+
+export function exportRenameBat(orders: AfterSaleOrder[], filename: string): void {
+  const renameItems = generateRenameList(orders);
+  const lines = [
+    '@echo off',
+    'chcp 65001',
+    'echo 正在批量重命名附件...',
+    'echo.',
+    '',
+  ];
+
+  renameItems.forEach((item, idx) => {
+    lines.push(`echo [${idx + 1}] ${item.originalName}  --^>  ${item.newName}`);
+    lines.push(`ren "${item.originalName}" "${item.newName}"`);
+  });
+
+  lines.push('');
+  lines.push('echo.');
+  lines.push('echo 重命名完成！');
+  lines.push('pause');
+
+  const content = lines.join('\r\n');
+  const blob = new Blob([content], { type: 'application/bat;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${filename}.bat`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
